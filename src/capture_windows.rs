@@ -65,10 +65,13 @@ fn run_capture_loop(
                 .chunks(channels)
                 .map(|c| c.iter().sum::<f32>() / channels as f32)
                 .collect();
+            let peak = mono.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
             if tx.send(mono).is_err() {
                 return Ok(());
             }
-            frames_received.fetch_add(1, Ordering::Relaxed);
+            if peak >= 1e-6 {
+                frames_received.fetch_add(1, Ordering::Relaxed);
+            }
         }
 
         if let Err(e) = capture_client.read_from_device_to_deque(&mut sample_queue) {
