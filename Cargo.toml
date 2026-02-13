@@ -1,0 +1,23 @@
+[package]
+name = "audio-visualizer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Audio playback and capture - use WASAPI on Windows
+cpal = { version = "0.15", default-features = false, features = ["wasapi"] }
+
+# FFT for frequency analysis
+rustfft = "6.1"
+
+# Simple 2D rendering
+macroquad = "0.4"
+
+[target.'cfg(windows)'.dependencies]
+cpal = { version = "0.15", default-features = false, features = ["wasapi"] }
+
+[target.'cfg(unix)'.dependencies]
+cpal = { version = "0.15", default-features = false, features = ["alsa-sys"] }
+
+[profile.release]
+opt-level = 3
