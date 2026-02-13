@@ -4,14 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# Audio playback and capture (WASAPI on Windows, ALSA on Linux - built-in backends)
-cpal = "0.15"
-
-# FFT for frequency analysis
+cpal = "0.16"
 rustfft = "6.1"
-
-# Simple 2D rendering
 macroquad = "0.4"
+
+[target.'cfg(windows)'.dependencies]
+wasapi = "0.22"
 
 [profile.release]
 opt-level = 3
