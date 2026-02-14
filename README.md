@@ -1,6 +1,8 @@
 # Audio Visualizer
 
-Classic Windows Media Player visualizer, recreated in Rust.
+## Example
+
+[![Audio Visualizer Demo](https://github.com/JThomasDevs/audio-visualizer/raw/main/media/thumbnail.jpg)](https://github.com/JThomasDevs/audio-visualizer/raw/main/media/example.mp4)
 
 ## Quick Start
 
