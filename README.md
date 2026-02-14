@@ -2,10 +2,6 @@
 
 Classic Windows Media Player–style circular visualizer in Rust. The bars react to system/playback audio and animate in real time.
 
-## Example
-
-[![Audio Visualizer Demo](https://github.com/JThomasDevs/audio-visualizer/raw/main/media/thumbnail.jpg)](https://github.com/JThomasDevs/audio-visualizer/raw/main/media/example.mp4)
-
 ## Quick Start
 
 ```bash
@@ -50,3 +46,4 @@ On macOS the app uses **ScreenCaptureKit (SCK)** to capture system audio. A mini
 - **Screen Recording** – Required for SCK to capture display and system audio. Enable for Terminal (or your IDE) if you run via `cargo`/`./run-release.sh`, or for the `audio-visualizer` binary if you run the built executable directly.
 
 After granting access, the visualizer shows dancing bars that react to whatever is playing through the system output.
+
