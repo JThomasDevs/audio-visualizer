@@ -1,5 +1,7 @@
 //! Audio Visualizer - Classic Windows Media Player style
 
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 #[cfg(windows)]
 mod capture_windows;
 
