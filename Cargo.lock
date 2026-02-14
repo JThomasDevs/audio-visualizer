@@ -43,6 +43,7 @@ dependencies = [
  "cpal",
  "macroquad",
  "rustfft",
+ "screencapturekit",
  "wasapi",
 ]
 
@@ -686,6 +687,12 @@ checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
 dependencies = [
  "winapi-util",
 ]
+
+[[package]]
+name = "screencapturekit"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ccf069cb109cf8e01ebdca0d55dfce45dbbf669e8c56ed5c62150b056d3ec9f"
 
 [[package]]
 name = "serde_core"

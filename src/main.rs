@@ -3,6 +3,9 @@
 #[cfg(windows)]
 mod capture_windows;
 
+#[cfg(target_os = "macos")]
+mod capture_macos_sck;
+
 use macroquad::prelude::*;
 #[cfg(not(windows))]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -303,6 +306,7 @@ async fn main() {
     let mut projectile_decel_mode = false;
     let mut projectile_distance_based = false;
     let mut game_time: f32 = 0.0;
+    let mut last_input_peak: f32 = 0.0;
 
     loop {
         let (w, h) = (screen_width(), screen_height());
@@ -354,7 +358,20 @@ async fn main() {
             }
         }
 
-        while let Ok(data) = rx.try_recv() {
+        while let Ok(mut data) = rx.try_recv() {
+            // Normalize level so low tap output (e.g. macOS aggregate) still shows bars
+            let peak = data
+                .iter()
+                .map(|&s| s.abs())
+                .fold(0.0f32, f32::max);
+            if peak > 1e-8 {
+                let target = 0.4f32;
+                let scale = (target / peak).min(1000.0);
+                for s in &mut data {
+                    *s *= scale;
+                }
+            }
+            last_input_peak = peak;
             state.update(&data);
         }
         state.tick_cooldowns();
@@ -399,8 +416,11 @@ async fn main() {
         }
         rainbow_phase = (rainbow_phase + 1.5) % 360.0;
 
-        const PROXIMITY_RANGE: f32 = 400.0;
-        const TIME_RAMP: f32 = 2.0;
+        // Distance mode: slowdown only in this many px before edge; curve keeps min speed until closer
+        const PROXIMITY_RANGE: f32 = 200.0;
+        const PROXIMITY_POWER: f32 = 1.8;
+        // Time mode: seconds alive before proximity reaches 1 (min speed); longer = stay fast until nearer edge
+        const TIME_RAMP: f32 = 6.0;
         const SPEED_RATE: f32 = 2.5;
         const MIN_SPEED: f32 = 90.0;
         let margin = 80.0;
@@ -440,7 +460,8 @@ async fn main() {
                         }
                     }
                     if edge_dist < PROXIMITY_RANGE {
-                        1.0 - edge_dist / PROXIMITY_RANGE
+                        let raw = 1.0 - edge_dist / PROXIMITY_RANGE;
+                        raw.powf(PROXIMITY_POWER)
                     } else {
                         0.0
                     }
@@ -547,9 +568,16 @@ async fn main() {
                     RED
                 },
             );
-            draw_text("SPACE: FPS | S: Rotate | ↑↓: Speed | A: Accel/Decel | D: Dist/Time | F11: Fullscreen", 10.0, y + 50.0, 14.0, DARKGRAY);
+            draw_text(
+                &format!("Level: {:.4} (before norm)", last_input_peak),
+                10.0,
+                y + 44.0,
+                14.0,
+                if last_input_peak > 1e-6 { GREEN } else { ORANGE },
+            );
+            draw_text("SPACE: FPS | S: Rotate | ↑↓: Speed | A: Accel/Decel | D: Dist/Time | F11: Fullscreen", 10.0, y + 63.0, 14.0, DARKGRAY);
             if frames_received.load(Ordering::Relaxed) == 0 {
-                draw_text("No audio", 10.0, y + 86.0, 12.0, ORANGE);
+                draw_text("No audio", 10.0, y + 99.0, 12.0, ORANGE);
             }
         }
 
@@ -561,11 +589,14 @@ fn capture_audio(tx: mpsc::Sender<Vec<f32>>, frames_received: Arc<AtomicU64>) {
     #[cfg(windows)]
     capture_windows::capture_loopback(tx, frames_received);
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    capture_macos_sck::capture_loopback(tx, frames_received);
+
+    #[cfg(all(not(windows), not(target_os = "macos")))]
     capture_audio_cpal(tx, frames_received);
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 fn capture_audio_cpal(tx: mpsc::Sender<Vec<f32>>, frames_received: Arc<AtomicU64>) {
     let host = cpal::default_host();
     let device = host
@@ -582,7 +613,7 @@ fn capture_audio_cpal(tx: mpsc::Sender<Vec<f32>>, frames_received: Arc<AtomicU64
     let err_fn = |err| eprintln!("Audio error: {}", err);
 
     macro_rules! build_stream {
-        ($fmt:ty, $convert:expr) => {
+        ($fmt:ty, $convert:expr) => {{
             let frames = Arc::clone(&frames_received);
             let stream = device
                 .build_input_stream(
@@ -594,8 +625,11 @@ fn capture_audio_cpal(tx: mpsc::Sender<Vec<f32>>, frames_received: Arc<AtomicU64
                         while sample_buffer.len() >= SAMPLES_NEEDED {
                             let chunk: Vec<f32> =
                                 sample_buffer.drain(..SAMPLES_NEEDED).collect();
+                            let peak = chunk.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
                             let _ = tx.send(chunk);
-                            frames.fetch_add(1, Ordering::Relaxed);
+                            if peak >= 1e-6 {
+                                frames.fetch_add(1, Ordering::Relaxed);
+                            }
                         }
                     },
                     err_fn,
@@ -603,7 +637,7 @@ fn capture_audio_cpal(tx: mpsc::Sender<Vec<f32>>, frames_received: Arc<AtomicU64
                 )
                 .expect("Failed to build audio stream");
             stream.play().expect("Failed to start audio stream");
-        };
+        }};
     }
 
     match sample_format {
@@ -619,7 +653,7 @@ fn capture_audio_cpal(tx: mpsc::Sender<Vec<f32>>, frames_received: Arc<AtomicU64
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 fn stereo_to_mono_f32(samples: &[f32], channels: usize) -> Vec<f32> {
     if channels <= 1 {
         return samples.to_vec();

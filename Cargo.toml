@@ -11,5 +11,8 @@ macroquad = "0.4"
 [target.'cfg(windows)'.dependencies]
 wasapi = "0.22"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+screencapturekit = { version = "1", features = ["macos_13_0"] }
+
 [profile.release]
 opt-level = 3
