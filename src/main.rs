@@ -4,11 +4,16 @@
 
 #[cfg(windows)]
 mod capture_windows;
+#[cfg(windows)]
+mod windows_focus;
 
 #[cfg(target_os = "macos")]
 mod capture_macos_sck;
 
+mod borderless_fullscreen;
+
 use macroquad::prelude::*;
+use macroquad::miniquad::window::{dpi_scale, get_window_position};
 #[cfg(not(windows))]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 #[cfg(not(windows))]
@@ -132,7 +137,7 @@ impl VisualizerState {
         }
     }
 
-    fn update(&mut self, audio_data: &[f32]) {
+    fn update(&mut self, audio_data: &[f32], sample_rate: f32) {
         if audio_data.len() < FFT_SIZE {
             return;
         }
@@ -145,10 +150,9 @@ impl VisualizerState {
 
         self.fft.process(&mut self.fft_input);
 
-        const SAMPLE_RATE: f32 = 44100.0;
         let bins = FFT_SIZE / 2;
-        let nyquist = SAMPLE_RATE / 2.0;
-        let freq_per_bin = SAMPLE_RATE / FFT_SIZE as f32;
+        let nyquist = sample_rate / 2.0;
+        let freq_per_bin = sample_rate / FFT_SIZE as f32;
 
         // Vocal-centric: mids dominate the circle, extremes (bass/highs) at edges.
         // Bass+Low 20-500Hz (10) | Mids 500-3.5kHz (44) | High 3.5k-10kHz (10)
@@ -287,7 +291,7 @@ impl VisualizerState {
 
 #[macroquad::main("Audio Visualizer")]
 async fn main() {
-    let (tx, rx) = mpsc::channel::<Vec<f32>>();
+    let (tx, rx) = mpsc::channel::<(Vec<f32>, f32)>();
     let frames_received = Arc::new(AtomicU64::new(0));
 
     thread::spawn({
@@ -300,6 +304,7 @@ async fn main() {
     let mut projectiles: Vec<Projectile> = Vec::new();
     let mut fullscreen = false;
     let mut saved_window_size: Option<(f32, f32)> = None;
+    let mut saved_window_position: Option<(i32, i32)> = None;
     let mut rainbow_phase: f32 = 0.0;
     let mut rotating = false;
     let mut circle_rotation: f32 = 0.0;
@@ -309,8 +314,19 @@ async fn main() {
     let mut projectile_distance_based = false;
     let mut game_time: f32 = 0.0;
     let mut last_input_peak: f32 = 0.0;
+    #[cfg(windows)]
+    let mut pending_focus_restore: Option<isize> = None;
+    #[cfg(windows)]
+    let mut last_foreign_foreground: Option<isize> = None;
 
     loop {
+        #[cfg(windows)]
+        {
+            if let Some(hwnd) = pending_focus_restore.take() {
+                windows_focus::restore_foreground(Some(hwnd));
+            }
+            last_foreign_foreground = windows_focus::update_last_foreign(last_foreign_foreground);
+        }
         let (w, h) = (screen_width(), screen_height());
         if (w, h) != prev_screen_size {
             projectiles.clear();
@@ -319,20 +335,57 @@ async fn main() {
         state.peak_fired.clear();
         if is_key_pressed(KeyCode::F11) {
             if fullscreen {
-                set_fullscreen(false);
-                if let Some((w, h)) = saved_window_size {
-                    request_new_screen_size(w, h);
+                if let (Some((sx, sy)), Some((sw, sh))) = (saved_window_position, saved_window_size) {
+                    #[cfg(windows)]
+                    {
+                        let scale = dpi_scale();
+                        borderless_fullscreen::exit_borderless_fullscreen(
+                            (sx, sy),
+                            ((sw * scale) as i32, (sh * scale) as i32),
+                        );
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        request_new_screen_size(sw, sh);
+                        macroquad::miniquad::window::set_window_position(sx, sy);
+                    }
                 }
+                fullscreen = false;
             } else {
+                let pos = get_window_position();
+                let pos_i = (pos.0 as i32, pos.1 as i32);
+                saved_window_position = Some(pos_i);
                 saved_window_size = Some((screen_width(), screen_height()));
-                set_fullscreen(true);
+                let (w, h) = (screen_width(), screen_height());
+                #[cfg(windows)]
+                {
+                    if borderless_fullscreen::enter_borderless_fullscreen(pos_i, (w as i32, h as i32)).is_some() {
+                        fullscreen = true;
+                    }
+                }
+                #[cfg(not(windows))]
+                {
+                    request_new_screen_size(7680.0, 4320.0);
+                    macroquad::miniquad::window::set_window_position(0, 0);
+                    fullscreen = true;
+                }
             }
-            fullscreen = !fullscreen;
         }
         if is_key_pressed(KeyCode::Escape) && fullscreen {
-            set_fullscreen(false);
-            if let Some((w, h)) = saved_window_size {
-                request_new_screen_size(w, h);
+            if let (Some((sx, sy)), Some((sw, sh))) = (saved_window_position, saved_window_size) {
+                #[cfg(windows)]
+                {
+                    let scale = dpi_scale();
+                    borderless_fullscreen::exit_borderless_fullscreen(
+                        (sx, sy),
+                        ((sw * scale) as i32, (sh * scale) as i32),
+                    );
+                }
+                #[cfg(not(windows))]
+                {
+                    request_new_screen_size(sw, sh);
+                    macroquad::miniquad::window::set_window_position(sx, sy);
+                }
             }
             fullscreen = false;
         }
@@ -360,7 +413,7 @@ async fn main() {
             }
         }
 
-        while let Ok(mut data) = rx.try_recv() {
+        while let Ok((mut data, sample_rate)) = rx.try_recv() {
             // Normalize level so low tap output (e.g. macOS aggregate) still shows bars
             let peak = data
                 .iter()
@@ -374,7 +427,7 @@ async fn main() {
                 }
             }
             last_input_peak = peak;
-            state.update(&data);
+            state.update(&data, sample_rate);
         }
         state.tick_cooldowns();
         state.decay_peaks();
@@ -587,7 +640,7 @@ async fn main() {
     }
 }
 
-fn capture_audio(tx: mpsc::Sender<Vec<f32>>, frames_received: Arc<AtomicU64>) {
+fn capture_audio(tx: mpsc::Sender<(Vec<f32>, f32)>, frames_received: Arc<AtomicU64>) {
     #[cfg(windows)]
     capture_windows::capture_loopback(tx, frames_received);
 
@@ -599,17 +652,39 @@ fn capture_audio(tx: mpsc::Sender<Vec<f32>>, frames_received: Arc<AtomicU64>) {
 }
 
 #[cfg(all(not(windows), not(target_os = "macos")))]
-fn capture_audio_cpal(tx: mpsc::Sender<Vec<f32>>, frames_received: Arc<AtomicU64>) {
+fn capture_audio_cpal(tx: mpsc::Sender<(Vec<f32>, f32)>, frames_received: Arc<AtomicU64>) {
     let host = cpal::default_host();
+
+    // Prefer a monitor/loopback source (system output) over mic. On PulseAudio/PipeWire,
+    // monitors appear as input devices with "monitor" in the name.
     let device = host
-        .default_output_device()
-        .expect("No default output device available");
+        .input_devices()
+        .ok()
+        .and_then(|devices| {
+            devices
+                .filter_map(|d| {
+                    d.name()
+                        .ok()
+                        .filter(|n| n.to_lowercase().contains("monitor"))
+                        .map(|_| d)
+                })
+                .next()
+        })
+        .or_else(|| host.default_input_device())
+        .expect("No audio input device available");
+
+    let device_name = device
+        .name()
+        .unwrap_or_else(|_| "Unknown".into());
+    eprintln!("Using audio device: {} (loopback if monitor, else default input)", device_name);
+
     let config = device
-        .default_output_config()
-        .expect("Failed to get output config");
+        .default_input_config()
+        .expect("Failed to get input config");
     let sample_format = config.sample_format();
     let channels = config.channels() as usize;
     let stream_config: cpal::StreamConfig = config.into();
+    let sample_rate = stream_config.sample_rate.0 as f32;
     let mut sample_buffer: Vec<f32> = Vec::with_capacity(1024);
     const SAMPLES_NEEDED: usize = FFT_SIZE;
     let err_fn = |err| eprintln!("Audio error: {}", err);
@@ -628,7 +703,7 @@ fn capture_audio_cpal(tx: mpsc::Sender<Vec<f32>>, frames_received: Arc<AtomicU64
                             let chunk: Vec<f32> =
                                 sample_buffer.drain(..SAMPLES_NEEDED).collect();
                             let peak = chunk.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-                            let _ = tx.send(chunk);
+                            let _ = tx.send((chunk, sample_rate));
                             if peak >= 1e-6 {
                                 frames.fetch_add(1, Ordering::Relaxed);
                             }

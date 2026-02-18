@@ -18,7 +18,7 @@ Or use a debug run (no Swift path needed): `cargo run`.
 
 - **Windows**: Captures default playback device (system audio) via WASAPI loopback.
 - **macOS**: Uses **ScreenCaptureKit (SCK)** for system audio. Requires **Screen Recording** permission—see [macOS (ScreenCaptureKit)](#macos-screencapturekit) for details.
-- **Linux**: Uses default capture device (e.g. microphone) via CPAL.
+- **Linux**: Prefers monitor/loopback (system output) via PulseAudio/PipeWire when available; falls back to default input. Uses CPAL.
 
 ## Controls
 

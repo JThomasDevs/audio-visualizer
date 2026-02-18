@@ -11,9 +11,10 @@ use std::thread;
 const FFT_SIZE: usize = 2048;
 
 struct CaptureState {
-    tx: mpsc::Sender<Vec<f32>>,
+    tx: mpsc::Sender<(Vec<f32>, f32)>,
     buffer: Mutex<Vec<f32>>,
     frames_received: Arc<AtomicU64>,
+    sample_rate: f32,
 }
 
 struct AudioHandler {
@@ -75,7 +76,7 @@ impl SCStreamOutputTrait for AudioHandler {
         while guard.len() >= FFT_SIZE {
             let chunk: Vec<f32> = guard.drain(..FFT_SIZE).collect();
             drop(guard);
-            if self.state.tx.send(chunk).is_err() {
+            if self.state.tx.send((chunk, self.state.sample_rate)).is_err() {
                 return;
             }
             self.state.frames_received.fetch_add(1, Ordering::Relaxed);
@@ -88,7 +89,7 @@ impl SCStreamOutputTrait for AudioHandler {
 }
 
 /// Runs system audio capture via ScreenCaptureKit; reinitializes on error.
-pub fn capture_loopback(tx: mpsc::Sender<Vec<f32>>, frames_received: Arc<AtomicU64>) {
+pub fn capture_loopback(tx: mpsc::Sender<(Vec<f32>, f32)>, frames_received: Arc<AtomicU64>) {
     loop {
         if let Err(e) = run_capture(tx.clone(), &frames_received) {
             eprintln!("ScreenCaptureKit capture error: {:?}, reinitializing in 2s...", e);
@@ -98,7 +99,7 @@ pub fn capture_loopback(tx: mpsc::Sender<Vec<f32>>, frames_received: Arc<AtomicU
 }
 
 fn run_capture(
-    tx: mpsc::Sender<Vec<f32>>,
+    tx: mpsc::Sender<(Vec<f32>, f32)>,
     frames_received: &AtomicU64,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let content = SCShareableContent::get()?;
@@ -113,17 +114,19 @@ fn run_capture(
         .with_excluding_windows(&[])
         .build();
 
+    const SAMPLE_RATE: u32 = 44100;
     let config = SCStreamConfiguration::new()
         .with_width(64)
         .with_height(64)
         .with_captures_audio(true)
-        .with_sample_rate(44100)
+        .with_sample_rate(SAMPLE_RATE)
         .with_channel_count(2);
 
     let state = Arc::new(CaptureState {
         tx,
         buffer: Mutex::new(Vec::with_capacity(FFT_SIZE * 2)),
         frames_received: Arc::new(AtomicU64::new(0)),
+        sample_rate: SAMPLE_RATE as f32,
     });
     state
         .frames_received

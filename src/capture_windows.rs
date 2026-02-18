@@ -9,7 +9,7 @@ use wasapi::{Direction, DeviceEnumerator, SampleType, StreamMode, WaveFormat};
 const FFT_SIZE: usize = 2048;
 
 /// Runs capture in a loop; on stream errors, reinitializes and continues.
-pub fn capture_loopback(tx: mpsc::Sender<Vec<f32>>, frames_received: std::sync::Arc<AtomicU64>) {
+pub fn capture_loopback(tx: mpsc::Sender<(Vec<f32>, f32)>, frames_received: std::sync::Arc<AtomicU64>) {
     wasapi::initialize_mta().ok().expect("COM init");
 
     loop {
@@ -21,7 +21,7 @@ pub fn capture_loopback(tx: mpsc::Sender<Vec<f32>>, frames_received: std::sync::
 }
 
 fn run_capture_loop(
-    tx: &mpsc::Sender<Vec<f32>>,
+    tx: &mpsc::Sender<(Vec<f32>, f32)>,
     frames_received: &AtomicU64,
 ) -> Result<(), wasapi::WasapiError> {
     let enumerator = DeviceEnumerator::new()?;
@@ -66,7 +66,8 @@ fn run_capture_loop(
                 .map(|c| c.iter().sum::<f32>() / channels as f32)
                 .collect();
             let peak = mono.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-            if tx.send(mono).is_err() {
+            let sample_rate = desired_format.get_samplespersec() as f32;
+            if tx.send((mono, sample_rate)).is_err() {
                 return Ok(());
             }
             if peak >= 1e-6 {

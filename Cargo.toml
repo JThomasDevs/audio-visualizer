@@ -10,6 +10,7 @@ macroquad = "0.4"
 
 [target.'cfg(windows)'.dependencies]
 wasapi = "0.22"
+windows = { version = "0.52", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 screencapturekit = { version = "1", features = ["macos_13_0"] }
